@@ -4,6 +4,8 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,7 +16,13 @@ import (
 func pingServer(url string) string {
 	resp, err := http.Get(url)
 	if err != nil {
+		if strings.Contains(err.Error(), "connection refused") {
+			color.Red(url + ": Connection refused")
+			sendNotification("Server Status", url+": Connection refused")
+			return url + ": Connection refused"
+		}
 		color.Red("Error: %v", err)
+		sendNotification("Server Status", "Error: "+err.Error())
 		return url + ": Error"
 	}
 	defer resp.Body.Close()
@@ -25,7 +33,16 @@ func pingServer(url string) string {
 		return url + ": Server online"
 	default:
 		color.Yellow(url + ": Server not responding")
+		sendNotification("Server Status", url+": Server not responding")
 		return url + ": Server not responding"
+	}
+}
+
+func sendNotification(title string, message string) {
+	cmd := exec.Command("osascript", "-e", `display notification "`+message+`" with title "`+title+`"`)
+	err := cmd.Run()
+	if err != nil {
+		log.Println("Error sending notification:", err)
 	}
 }
 
@@ -50,9 +67,23 @@ func updateStatuses(websites []string, menuItems map[string]*systray.MenuItem) {
 
 func createMenuItems(websites []string) map[string]*systray.MenuItem {
 	menuItems := make(map[string]*systray.MenuItem)
+
 	for _, website := range websites {
-		menuItems[website] = systray.AddMenuItem(website, "Checking...")
+		menuItem := systray.AddMenuItem(website, "Checking status...")
+		menuItems[website] = menuItem
+
+		go func(website string, menuItem *systray.MenuItem) {
+			for {
+				<-menuItem.ClickedCh
+				cmd := exec.Command("open", website)
+				err := cmd.Run()
+				if err != nil {
+					log.Println("Error opening website:", err)
+				}
+			}
+		}(website, menuItem)
 	}
+
 	return menuItems
 }
 
@@ -71,12 +102,12 @@ func onReady() {
 
 	menuItems := createMenuItems(websites)
 
-	systray.SetIcon(loadIcon("your/path"))
+	systray.SetIcon(loadIcon("your-path"))
 
 	go func() {
 		for {
 			updateStatuses(websites, menuItems)
-			time.Sleep(5 * time.Minute)
+			time.Sleep(1 * time.Minute)
 		}
 	}()
 }
